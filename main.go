@@ -11,18 +11,25 @@ import (
 	shell "github.com/ipfs/go-ipfs-api"
 )
 
+type File struct {
+	Filename string `json:"filename"`
+	Cid      string `json:"cid"`
+	Size     uint64 `json:"size"`
+}
+
 func upload_to_ipfs(c *gin.Context) {
 	form, err := c.MultipartForm()
 	if err != nil {
 		panic(err)
 	}
 
-	files := form.File["files"]
-	if len(files) != 0 {
+	files := []File{}
+
+	rev_files := form.File["files"]
+	if len(rev_files) != 0 {
 		sh := shell.NewShell(os.Getenv("IPFS_GATEWAY"))
 
-		var cids []string
-		for _, file := range files {
+		for _, file := range rev_files {
 
 			opened, err := file.Open()
 			if err != nil {
@@ -39,12 +46,19 @@ func upload_to_ipfs(c *gin.Context) {
 				log.Fatal(err)
 			}
 
-			cids = append(cids, cid)
+			filesize, err := sh.FilesStat(c.Request.Context(), "/ipfs/"+cid)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			files = append(files, File{
+				Filename: file.Filename,
+				Cid:  cid,
+				Size: filesize.Size,
+			})
 		}
 
-		c.JSON(200, &gin.H{
-			"cid": cids,
-		})
+		c.JSON(200, files)
 	} else {
 		c.JSON(400, &gin.H{
 			"error": "Please provide atleast one file",
