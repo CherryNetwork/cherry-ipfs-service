@@ -22,5 +22,7 @@ func main() {
 	r.Use(cors.Default())
 	r.GET("/trigger", s3_client.Trigger)
 
-	r.Run(":8081")
+	if err := r.Run(":8081"); err != nil {
+		log.Fatal(err)
+	}
 }
