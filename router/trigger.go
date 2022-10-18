@@ -1,6 +1,7 @@
 package router
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -11,6 +12,7 @@ import (
 	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
+	shell "github.com/ipfs/go-ipfs-api"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -69,21 +71,31 @@ func parseFilename(key_string string) (filename string) {
 	return s
 }
 
-func Trigger(c *gin.Context) {
-	bucket := os.Getenv("BUCKET")
-	key := "100.json"
+type ControllerState struct {
+	sess      *session.Session
+	s3_client *s3.S3
+	sh        *shell.Shell
+}
 
-	filename := parseFilename(key)
-
+func Default() *ControllerState {
 	fmt.Println(os.Getenv("ACCESS_TOKEN_ID"), os.Getenv("SECRET_ACCESS_KEY"), os.Getenv("SESSION_TOKEN"))
 	sess := session.Must(session.NewSession(&aws.Config{
 		Region:      aws.String("eu-west-3"),
 		Credentials: credentials.NewStaticCredentials(os.Getenv("ACCESS_TOKEN_ID"), os.Getenv("SECRET_ACCESS_KEY"), os.Getenv("SESSION_TOKEN")),
 	}))
+	sh := shell.NewShell("localhost:5001")
 
-	s3_client := s3.New(sess)
-	downloader := s3manager.NewDownloader(sess)
-	size, err := getFileSize(s3_client, bucket, key)
+	return &ControllerState{sess: sess, s3_client: s3.New(sess), sh: sh}
+}
+
+func (state *ControllerState) Trigger(c *gin.Context) {
+	bucket := os.Getenv("BUCKET")
+	key := c.Query("filename")
+
+	filename := parseFilename(key)
+
+	downloader := s3manager.NewDownloader(state.sess)
+	size, err := getFileSize(state.s3_client, bucket, key)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -127,6 +139,34 @@ func Trigger(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, filename)
+	opened_file, err := os.Open(filename)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var b bytes.Buffer
+	if _, err := io.Copy(&b, opened_file); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	cid, err := state.sh.Add(strings.NewReader(b.String()))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	os.Remove(filename)
+
+	_, err = state.s3_client.DeleteObject(&s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, cid)
 
 }
