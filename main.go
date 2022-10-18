@@ -10,16 +10,17 @@ import (
 )
 
 func main() {
-
 	err := godotenv.Load()
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	s3_client := router.Default()
+
 	r := gin.Default()
 
 	r.Use(cors.Default())
-	r.GET("/trigger", router.Trigger)
+	r.GET("/trigger", s3_client.Trigger)
 
-	r.Run(":8080")
+	r.Run(":8081")
 }
